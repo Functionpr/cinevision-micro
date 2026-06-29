@@ -1,0 +1,78 @@
+# .github/workflows/drift-detection.yml
+name: Drift Detection
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # Run daily at 6 AM UTC
+  workflow_dispatch:
+
+jobs:
+  detect-drift:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, staging, prod, prod-dr]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.6.6'
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: 'us-east-1'
+      
+      - name: Terraform Init
+        run: |
+          cd terraform/environments/${{ matrix.environment }}
+          terraform init -input=false
+      
+      - name: Terraform Refresh
+        run: |
+          cd terraform/environments/${{ matrix.environment }}
+          terraform refresh
+      
+      - name: Terraform Plan (Drift Detection)
+        id: plan
+        run: |
+          cd terraform/environments/${{ matrix.environment }}
+          terraform plan -detailed-exitcode
+        continue-on-error: true
+      
+      - name: Send Drift Alert
+        if: steps.plan.outputs.exitcode == '2'
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "⚠️ Configuration Drift Detected in ${{ matrix.environment }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*⚠️ Configuration Drift Detected!*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\n${{ matrix.environment }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Action Required:*\nReview and apply changes"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
