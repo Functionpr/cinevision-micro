@@ -1,0 +1,520 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+      - "release/**"
+      - "hotfix/**"
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: "21"
+  NODE_VERSION: "20"
+  TERRAFORM_VERSION: "1.6.6"
+
+jobs:
+  detect-changes:
+    name: Detect Changed Paths
+    runs-on: ubuntu-latest
+    outputs:
+      ci_configs: ${{ steps.filter.outputs.ci_configs }}
+      terraform: ${{ steps.filter.outputs.terraform }}
+      k8s: ${{ steps.filter.outputs.k8s }}
+      scripts: ${{ steps.filter.outputs.scripts }}
+      docs: ${{ steps.filter.outputs.docs }}
+      tests: ${{ steps.filter.outputs.tests }}
+      database: ${{ steps.filter.outputs.database }}
+      services: ${{ steps.filter.outputs.services }}
+      api_gateway: ${{ steps.filter.outputs.api_gateway }}
+      eureka_server: ${{ steps.filter.outputs.eureka_server }}
+      movie_service: ${{ steps.filter.outputs.movie_service }}
+      user_service: ${{ steps.filter.outputs.user_service }}
+      email_service: ${{ steps.filter.outputs.email_service }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      available_services: ${{ steps.discover-services.outputs.available_services }}
+      changed_services_matrix: ${{ steps.changed-services.outputs.matrix }}
+      changed_services_list: ${{ steps.changed-services.outputs.list }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Discover available services
+        id: discover-services
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVICES=()
+
+          if [ -d "services" ]; then
+            for dir in services/*/; do
+              service_name=$(basename "$dir")
+              if [ -f "${dir}package.json" ] || [ -f "${dir}pom.xml" ]; then
+                SERVICES+=("\"$service_name\"")
+              fi
+            done
+          fi
+
+          if [ ${#SERVICES[@]} -eq 0 ]; then
+            AVAILABLE_SERVICES="[]"
+            echo "⚠️ No services discovered"
+          else
+            AVAILABLE_SERVICES="[$(IFS=,; echo "${SERVICES[*]}")]"
+            echo "✅ Discovered ${#SERVICES[@]} services"
+          fi
+
+          echo "available_services=$AVAILABLE_SERVICES" >> "$GITHUB_OUTPUT"
+
+      - name: Detect paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          filters: |
+            ci_configs:
+              - 'Jenkinsfile'
+              - '.github/workflows/**'
+              - '.dockerignore'
+              - 'docker-compose.yml'
+              - 'argocd-applications.yaml'
+            terraform:
+              - 'terraform/**'
+            k8s:
+              - 'k8s/**'
+            scripts:
+              - 'scripts/**'
+              - 'init-scripts/**'
+            docs:
+              - 'docs/**'
+              - '**/*.md'
+            tests:
+              - 'tests/**'
+            database:
+              - 'database/**'
+              - 'docker/**'
+            services:
+              - 'services/**'
+            api_gateway:
+              - 'services/api-gateway/**'
+            eureka_server:
+              - 'services/eureka-server/**'
+            movie_service:
+              - 'services/movieService/**'
+            user_service:
+              - 'services/userService/**'
+            email_service:
+              - 'services/emailService/**'
+            frontend:
+              - 'services/frontend/**'
+
+      - name: Build changed services matrix
+        id: changed-services
+        shell: bash
+        run: |
+          set -euo pipefail
+          services=()
+
+          [[ "${{ steps.filter.outputs.api_gateway }}" == "true" ]] && services+=('"api-gateway"')
+          [[ "${{ steps.filter.outputs.eureka_server }}" == "true" ]] && services+=('"eureka-server"')
+          [[ "${{ steps.filter.outputs.movie_service }}" == "true" ]] && services+=('"movieService"')
+          [[ "${{ steps.filter.outputs.user_service }}" == "true" ]] && services+=('"userService"')
+          [[ "${{ steps.filter.outputs.email_service }}" == "true" ]] && services+=('"emailService"')
+          [[ "${{ steps.filter.outputs.frontend }}" == "true" ]] && services+=('"frontend"')
+
+          if [[ ${#services[@]} -eq 0 ]]; then
+            echo "matrix=[]" >> "$GITHUB_OUTPUT"
+            echo "list=" >> "$GITHUB_OUTPUT"
+          else
+            matrix="[$(IFS=,; echo "${services[*]}")]"
+            list="$(IFS=,; echo "${services[*]}" | tr -d '"')"
+            echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+            echo "list=$list" >> "$GITHUB_OUTPUT"
+          fi
+
+  ci-config-validation:
+    name: Validate CI and Root Config
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ci_configs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate GitHub workflows
+        uses: rhysd/actionlint@v1
+
+      - name: Validate Jenkinsfile structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Jenkinsfile
+          grep -q "pipeline[[:space:]]*{" Jenkinsfile
+          grep -q "stages[[:space:]]*{" Jenkinsfile
+
+      - name: Validate Docker Compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose config -q
+
+      - name: Validate YAML manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install yamllint
+          yamllint -d relaxed .github/workflows
+          yamllint -d relaxed argocd-applications.yaml
+
+  terraform-validation:
+    name: Terraform Validate
+    needs: detect-changes
+    if: needs.detect-changes.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -recursive -check terraform
+
+      - name: Terraform Init and Validate (environments and modules)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t env_dirs < <(find terraform/environments -type f -name main.tf -exec dirname {} \; | sort -u)
+          mapfile -t module_dirs < <(find terraform/modules -type f -name main.tf -exec dirname {} \; | sort -u)
+
+          for dir in "${env_dirs[@]}"; do
+            echo "Validating $dir"
+            pushd "$dir" >/dev/null
+            terraform init -backend=false -input=false
+            terraform validate
+            popd >/dev/null
+          done
+
+          for dir in "${module_dirs[@]}"; do
+            echo "Validating module $dir"
+            pushd "$dir" >/dev/null
+            terraform init -backend=false -input=false
+            set +e
+            output="$(terraform validate 2>&1)"
+            status=$?
+            set -e
+            echo "$output"
+
+            if [[ $status -ne 0 ]]; then
+              if echo "$output" | grep -q "Provider configuration not present"; then
+                echo "Ignoring provider alias wiring error for standalone module validation."
+              else
+                exit $status
+              fi
+            fi
+            popd >/dev/null
+          done
+
+  kubernetes-validation:
+    name: Kubernetes and Kustomize Validate
+    needs: detect-changes
+    if: needs.detect-changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubeconform and kustomize
+        shell: bash
+        run: |
+          set -euo pipefail
+          KUSTOMIZE_VERSION="v5.4.3"
+          curl -sSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" | tar -xz
+          sudo mv kustomize /usr/local/bin/kustomize
+          curl -sSL "https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz" | tar -xz
+          sudo mv kubeconform /usr/local/bin/kubeconform
+
+      - name: Validate rendered overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          overlays=(
+            "k8s/overlays/dev"
+            "k8s/overlays/staging"
+            "k8s/overlays/dr"
+            "k8s/overlays/prod/blue"
+            "k8s/overlays/prod/green"
+          )
+
+          for overlay in "${overlays[@]}"; do
+            if [[ -d "$overlay" ]]; then
+              echo "Rendering $overlay"
+              kustomize build "$overlay" > /tmp/rendered.yaml
+              kubeconform -strict -ignore-missing-schemas /tmp/rendered.yaml
+            fi
+          done
+
+  services-validation:
+    name: Validate Changed Services
+    needs: detect-changes
+    if: needs.detect-changes.outputs.services == 'true' && needs.detect-changes.outputs.changed_services_matrix != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.changed_services_matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect service type
+        id: service-type
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_path="services/${{ matrix.service }}"
+          if [[ -f "${service_path}/pom.xml" ]]; then
+            echo "type=maven" >> "$GITHUB_OUTPUT"
+          elif [[ -f "${service_path}/package.json" ]]; then
+            echo "type=node" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unsupported service structure: ${service_path}"
+            exit 1
+          fi
+
+      - name: Setup Java
+        if: steps.service-type.outputs.type == 'maven'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          cache-dependency-path: services/${{ matrix.service }}/pom.xml
+
+      - name: Setup Node
+        if: steps.service-type.outputs.type == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - name: Build Maven service
+        if: steps.service-type.outputs.type == 'maven'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "services/${{ matrix.service }}"
+          mvn -B -ntp clean verify
+
+      - name: Build Node service
+        if: steps.service-type.outputs.type == 'node'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "services/${{ matrix.service }}"
+          npm ci --no-audit --no-fund
+          npm run lint --if-present
+          npm test --if-present
+          npm run build --if-present
+
+  tests-validation:
+    name: Validate Test Suites
+    needs: detect-changes
+    if: needs.detect-changes.outputs.tests == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node for test validation
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate test source syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          find tests -type f \( -name "*.js" -o -name "*.mjs" \) -print0 | xargs -0 -n1 node --check
+
+      - name: Run integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f tests/integration/package.json ]; then
+            cd tests/integration
+            npm ci --no-audit --no-fund
+            npm test
+          else
+            echo "No integration package.json found; skipping integration tests"
+          fi
+
+  database-validation:
+    name: Validate Database Artifacts
+    needs: detect-changes
+    if: needs.detect-changes.outputs.database == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install database validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck python3 python3-pip
+          python3 -m pip install --upgrade pip
+          pip install sqlfluff
+
+      - name: Validate Postgres SQL files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f database/postgres/schema.sql ] || [ -f database/postgres/seed.sql ]; then
+            sqlfluff lint --dialect postgres database/postgres/schema.sql database/postgres/seed.sql
+          else
+            echo "No Postgres SQL files found to lint"
+          fi
+
+      - name: Validate MongoDB init scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find database/init/mongodb -type f -name '*.js' -print0 | xargs -0 -n1 node --check || true
+
+      - name: Validate database bootstrap scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find database/init/postgres -type f -name '*.sh' -print0 | xargs -0 -n1 shellcheck || true
+
+  scripts-validation:
+    name: Validate Scripts
+    needs: detect-changes
+    if: needs.detect-changes.outputs.scripts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Validate shell scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find scripts init-scripts -type f \( -name "*.sh" -o -name "*.bash" \) | while read -r file; do
+            shellcheck "$file"
+          done
+
+      - name: Validate python scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          find scripts init-scripts -type f -name "*.py" | while read -r file; do
+            python -m py_compile "$file"
+          done
+
+  docs-validation:
+    name: Validate Documentation
+    needs: detect-changes
+    if: needs.detect-changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Markdown link check
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: "yes"
+          check-modified-files-only: "yes"
+          base-branch: ${{ github.base_ref }}
+
+  secrets-scan:
+    name: Secrets Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  quality-gate:
+    name: Quality Gate
+    if: always()
+    needs:
+      - detect-changes
+      - ci-config-validation
+      - terraform-validation
+      - kubernetes-validation
+      - services-validation
+      - tests-validation
+      - database-validation
+      - scripts-validation
+      - docs-validation
+      - secrets-scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize validation status
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Changed services: ${{ needs.detect-changes.outputs.changed_services_list }}"
+
+          failed=0
+          for result in \
+            "${{ needs.ci-config-validation.result }}" \
+            "${{ needs.terraform-validation.result }}" \
+            "${{ needs.kubernetes-validation.result }}" \
+            "${{ needs.services-validation.result }}" \
+            "${{ needs.tests-validation.result }}" \
+            "${{ needs.database-validation.result }}" \
+            "${{ needs.scripts-validation.result }}" \
+            "${{ needs.docs-validation.result }}" \
+            "${{ needs.secrets-scan.result }}"; do
+            if [[ "$result" == "failure" ]]; then
+              failed=1
+            fi
+          done
+
+          if [[ "$failed" -eq 1 ]]; then
+            echo "Validation failed."
+            exit 1
+          fi
+
+          echo "All required validations passed."
