@@ -1,0 +1,262 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches: [develop, staging, main]
+    paths: ['terraform/**']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to target'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+          - prod-dr
+
+env:
+  TERRAFORM_VERSION: '1.6.6'
+  AWS_REGION: 'us-east-1'
+
+jobs:
+# --------------------------------
+# 1. Setup Logic
+# --------------------------------
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.mapping.outputs.env }}
+    steps:
+      - id: mapping
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "env=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            if [[ "${{ github.ref_name }}" == "develop" ]]; then
+              echo 'env=dev' >> $GITHUB_OUTPUT
+            elif [[ "${{ github.ref_name }}" == "staging" ]]; then
+              echo 'env=staging' >> $GITHUB_OUTPUT
+            elif [[ "${{ github.ref_name }}" == "main" ]]; then
+              echo 'env=prod' >> $GITHUB_OUTPUT
+            fi
+          fi
+
+# --------------------------------
+# 2. Terraform Apply (with Plan)
+# --------------------------------
+  terraform-apply:
+    needs: setup
+    runs-on: ubuntu-latest
+    environment: 
+      name: ${{ needs.setup.outputs.env }}
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      # IMPROVEMENT 1: OIDC Instead of Access Keys
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: |
+          cd terraform/environments/${{ needs.setup.outputs.env }}
+          terraform init -input=false -reconfigure
+
+      # IMPROVEMENT 2: Plan Before Apply
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd terraform/environments/${{ needs.setup.outputs.env }}
+          terraform plan -out=tfplan
+          echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Terraform Apply
+        run: |
+          cd terraform/environments/${{ needs.setup.outputs.env }}
+          terraform apply tfplan
+
+      # IMPROVEMENT 4: Notification System
+      - name: Send Slack Notification
+        uses: slackapi/slack-github-action@v1.24.0
+        if: always()
+        with:
+          payload: |
+            {
+              "text": "Terraform Apply ${{ job.status }} - ${{ needs.setup.outputs.env }}",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Terraform Apply ${{ job.status }}*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\n${{ needs.setup.outputs.env }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n${{ github.ref_name }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Triggered by:*\n${{ github.event_name }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Commit:*\n${{ github.sha }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Terraform Apply Summary
+        if: always()
+        run: |
+          echo "## Terraform Apply Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** ${{ needs.setup.outputs.env }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Plan Exit Code:** ${{ steps.plan.outputs.plan_exit_code }}" >> $GITHUB_STEP_SUMMARY
+
+# --------------------------------
+# 3. Production DR with Approval Gate
+# --------------------------------
+  terraform-apply-dr:
+    needs: setup
+    if: needs.setup.outputs.env == 'prod'
+    runs-on: ubuntu-latest
+    # IMPROVEMENT 3: Approval Gate for Production
+    environment: 
+      name: prod-dr
+      # This requires configuration in GitHub Settings → Environments
+      # with required reviewers for prod-dr environment
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          
+      # IMPROVEMENT 1: OIDC Instead of Access Keys
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Terraform Init
+        run: |
+          cd terraform/environments/prod-dr
+          terraform init -input=false -reconfigure
+      
+      # IMPROVEMENT 2: Plan Before Apply
+      - name: Terraform Plan
+        id: plan_dr
+        run: |
+          cd terraform/environments/prod-dr
+          terraform plan -out=tfplan
+          echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+          
+      - name: Terraform Apply
+        run: |
+          cd terraform/environments/prod-dr
+          terraform apply tfplan
+          
+      # IMPROVEMENT 4: Notification System
+      - name: Send Slack Notification DR
+        uses: slackapi/slack-github-action@v1.24.0
+        if: always()
+        with:
+          payload: |
+            {
+              "text": "Terraform Apply DR ${{ job.status }} - prod-dr",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Terraform Apply DR ${{ job.status }}*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Environment:*\nprod-dr"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n${{ github.ref_name }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Triggered by:*\n${{ github.event_name }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Commit:*\n${{ github.sha }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View Workflow"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+          
+      - name: Terraform Apply DR Summary
+        if: always()
+        run: |
+          echo "## Terraform Apply DR Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** prod-dr" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Plan Exit Code:** ${{ steps.plan_dr.outputs.plan_exit_code }}" >> $GITHUB_STEP_SUMMARY
