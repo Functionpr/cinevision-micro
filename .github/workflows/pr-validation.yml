@@ -163,9 +163,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f Jenkinsfile
-          grep -q "pipeline[[:space:]]*{" Jenkinsfile
-          grep -q "stages[[:space:]]*{" Jenkinsfile
+          if [ ! -f Jenkinsfile ]; then
+            echo "Jenkinsfile not found"
+            exit 1
+          fi
+
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          text = Path('Jenkinsfile').read_text(encoding='utf-8')
+          if not re.search(r'(?m)^[[:space:]]*pipeline[[:space:]]*\{', text):
+              raise SystemExit('Jenkinsfile is missing a pipeline block')
+          if not re.search(r'(?m)^[[:space:]]*stages[[:space:]]*\{', text):
+              raise SystemExit('Jenkinsfile is missing a stages block')
+
+          print('Jenkinsfile structure validation passed')
+          PY
 
       - name: Validate Docker Compose
         shell: bash
