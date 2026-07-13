@@ -295,7 +295,7 @@ jobs:
         env:
           BASE_BRANCH: ${{ github.ref_name }}
           BOT_BRANCH: bot/terraform-configmap-sync-${{ needs.setup.outputs.env }}-${{ github.run_id }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -312,13 +312,26 @@ jobs:
               echo "Pull request already exists: $existing_pr"
               echo "- PR: $existing_pr" >> "$GITHUB_STEP_SUMMARY"
             else
-              pr_url=$(gh pr create \
+              set +e
+              pr_output=$(gh pr create \
+                --repo "${{ github.repository }}" \
                 --base "$BASE_BRANCH" \
                 --head "$BOT_BRANCH" \
                 --title "chore(k8s): sync configmap from terraform outputs for ${{ needs.setup.outputs.env }}" \
-                --body "This pull request was generated automatically by the Terraform apply workflow. Review and merge it to update the Kubernetes ConfigMap patch on $BASE_BRANCH.")
-              echo "Created pull request: $pr_url"
-              echo "- PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+                --body "This pull request was generated automatically by the Terraform apply workflow. Review and merge it to update the Kubernetes ConfigMap patch on $BASE_BRANCH." 2>&1)
+              pr_exit=$?
+              set -e
+
+              if [ $pr_exit -eq 0 ]; then
+                echo "Created pull request: $pr_output"
+                echo "- PR: $pr_output" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "Pull request creation was blocked by GitHub permissions or repository settings."
+                echo "$pr_output"
+                echo "- Branch: $BOT_BRANCH" >> "$GITHUB_STEP_SUMMARY"
+                echo "- PR: blocked; create it manually from the pushed branch" >> "$GITHUB_STEP_SUMMARY"
+                echo "::warning::Pull request creation was not permitted; the branch was pushed for manual review."
+              fi
             fi
           fi
 
