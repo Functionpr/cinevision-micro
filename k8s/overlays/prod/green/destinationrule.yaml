@@ -1,0 +1,19 @@
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: cinevision-green
+spec:
+  host: api-gateway-green
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: cinevision-frontend-green
+spec:
+  host: frontend-green
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN

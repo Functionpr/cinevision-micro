@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cinevision
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - adot-collector.yaml
+  - secrets-serviceaccount.yaml
+  - cluster-secret-store.yaml
+  - externalsecret.yaml
+  - api-gateway.yaml
+  - user-service.yaml
+  - movie-service.yaml
+  - email-service.yaml
+  - eureka-server.yaml
+  - istio/gateway.yaml
+  - istio/virtualservice.yaml

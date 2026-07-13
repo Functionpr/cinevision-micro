@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: user-service-docdb-connectivity-check
+  namespace: cinevision-dev
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: cinevision-secrets-sa
+      containers:
+        - name: user-service
+          image: 211026994790.dkr.ecr.us-east-1.amazonaws.com/cinevision/user-service:dev
+          envFrom:
+            - configMapRef:
+                name: cinevision-config
+            - secretRef:
+                name: cinevision-app-secrets
+          env:
+            - name: CINEVISION_CONNECTIVITY_CHECK_ENABLED
+              value: "true"
+            - name: EUREKA_CLIENT_ENABLED
+              value: "false"
+            - name: MANAGEMENT_TRACING_ENABLED
+              value: "false"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: movie-service-postgres-connectivity-check
+  namespace: cinevision-dev
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: cinevision-secrets-sa
+      containers:
+        - name: movie-service
+          image: 211026994790.dkr.ecr.us-east-1.amazonaws.com/cinevision/movie-service:dev
+          envFrom:
+            - configMapRef:
+                name: cinevision-config
+            - secretRef:
+                name: cinevision-app-secrets
+          env:
+            - name: CINEVISION_CONNECTIVITY_CHECK_ENABLED
+              value: "true"
+            - name: EUREKA_CLIENT_ENABLED
+              value: "false"
+            - name: MANAGEMENT_TRACING_ENABLED
+              value: "false"
+            - name: MANAGEMENT_HEALTH_REDIS_ENABLED
+              value: "false"

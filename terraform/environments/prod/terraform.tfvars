@@ -1,0 +1,45 @@
+project_name                     = "cinevision"
+aws_profile                      = "cinevision-prod"
+primary_region                   = "us-east-1"
+dr_region                        = "us-west-2"
+cidr_block                       = "10.30.0.0/16"
+azs                              = ["us-east-1a", "us-east-1b", "us-east-1c"]
+public_subnet_cidrs              = ["10.30.0.0/24", "10.30.1.0/24", "10.30.2.0/24"]
+private_subnet_cidrs             = ["10.30.10.0/24", "10.30.11.0/24", "10.30.12.0/24"]
+database_subnet_cidrs            = ["10.30.20.0/24", "10.30.21.0/24", "10.30.22.0/24"]
+dr_cidr_block                    = "10.31.0.0/16"
+dr_azs                           = ["us-west-2a", "us-west-2b", "us-west-2c"]
+dr_public_subnet_cidrs           = ["10.31.0.0/24", "10.31.1.0/24", "10.31.2.0/24"]
+dr_private_subnet_cidrs          = ["10.31.10.0/24", "10.31.11.0/24", "10.31.12.0/24"]
+dr_database_subnet_cidrs         = ["10.31.20.0/24", "10.31.21.0/24", "10.31.22.0/24"]
+frontend_bucket_name             = "prod-cinevision-prod-frontend"
+logs_bucket_name                 = "prod-cinevision-prod-logs"
+dr_frontend_bucket_name          = "prod-dr-cinevision-prod-dr-frontend"
+frontend_aliases                 = ["DOMAIN_NAME"]
+acm_certificate_arn              = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/PROD_CERTIFICATE_ID"
+enable_waf                       = true
+enable_shield_advanced           = true
+waf_rate_limit                   = 500
+rds_instance_class               = "db.r6g.large"
+rds_dr_instance_class            = "db.t4g.medium"
+db_name                          = "cinevision"
+db_username                      = "cinevision_admin"
+docdb_master_username            = "cinevision_docdb_admin"
+database_credentials_secret_name = "/cinevision/prod/database-credentials"
+application_secrets_secret_name  = "/cinevision/prod/application-secrets"
+redis_node_type                  = "cache.r6g.large"
+msk_broker_count                 = 3
+msk_broker_instance_type         = "kafka.m5.large"
+node_groups = {
+  general = {
+    instance_types = ["m5.xlarge"]
+    desired_size   = 4
+    min_size       = 4
+    max_size       = 8
+    disk_size      = 120
+    capacity_type  = "ON_DEMAND"
+  }
+}
+tags = {
+  Owner = "platform-team"
+}

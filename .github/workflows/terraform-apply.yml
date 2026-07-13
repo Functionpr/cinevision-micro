@@ -17,6 +17,10 @@ on:
           - prod
           - prod-dr
 
+permissions:
+  id-token: write
+  contents: write
+
 env:
   TERRAFORM_VERSION: '1.6.6'
   AWS_REGION: 'us-east-1'
@@ -33,14 +37,14 @@ jobs:
       - id: mapping
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "env=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "env=${{ github.event.inputs.environment }}" >> "$GITHUB_OUTPUT"
           else
             if [[ "${{ github.ref_name }}" == "develop" ]]; then
-              echo 'env=dev' >> $GITHUB_OUTPUT
+              echo 'env=dev' >> "$GITHUB_OUTPUT"
             elif [[ "${{ github.ref_name }}" == "staging" ]]; then
-              echo 'env=staging' >> $GITHUB_OUTPUT
+              echo 'env=staging' >> "$GITHUB_OUTPUT"
             elif [[ "${{ github.ref_name }}" == "main" ]]; then
-              echo 'env=prod' >> $GITHUB_OUTPUT
+              echo 'env=prod' >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -78,7 +82,7 @@ jobs:
         run: |
           cd terraform/environments/${{ needs.setup.outputs.env }}
           terraform plan -out=tfplan
-          echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+          echo "plan_exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Terraform Apply
         run: |
@@ -144,15 +148,171 @@ jobs:
       - name: Terraform Apply Summary
         if: always()
         run: |
-          echo "## Terraform Apply Results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** ${{ needs.setup.outputs.env }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Plan Exit Code:** ${{ steps.plan.outputs.plan_exit_code }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Terraform Apply Results"
+            echo "- **Environment:** ${{ needs.setup.outputs.env }}"
+            echo "- **Status:** ${{ job.status }}"
+            echo "- **Branch:** ${{ github.ref_name }}"
+            echo "- **Triggered by:** ${{ github.event_name }}"
+            echo "- **Plan Exit Code:** ${{ steps.plan.outputs.plan_exit_code }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
 # --------------------------------
-# 3. Production DR with Approval Gate
+# 3. Sync Terraform Outputs to Kubernetes ConfigMap
+# --------------------------------
+  sync-k8s-configmap:
+    needs: [setup, terraform-apply]
+    if: needs.terraform-apply.result == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.setup.outputs.env }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: |
+          cd terraform/environments/${{ needs.setup.outputs.env }}
+          terraform init -input=false -reconfigure
+
+      - name: Export Terraform outputs
+        run: |
+          cd terraform/environments/${{ needs.setup.outputs.env }}
+          terraform output -json > "$GITHUB_WORKSPACE/terraform-outputs.json"
+
+      - name: Generate Kubernetes ConfigMap patch
+        env:
+          TARGET_ENV: ${{ needs.setup.outputs.env }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          outputs = json.loads(Path('terraform-outputs.json').read_text())
+
+          def output(name, default=''):
+              item = outputs.get(name)
+              if item is None:
+                  return default
+              value = item.get('value', default)
+              if value is None:
+                  return default
+              if isinstance(value, list):
+                  return ','.join(str(v) for v in value)
+              if isinstance(value, dict):
+                  return json.dumps(value, separators=(',', ':'))
+              return str(value)
+
+          target_env = os.environ['TARGET_ENV']
+          overlay_env = 'dr' if target_env == 'prod-dr' else target_env
+          overlay_path = Path('k8s') / 'overlays' / overlay_env / 'configmap-patch.yaml'
+
+          postgres_host = output('dr_postgres_replica_endpoint') if target_env == 'prod-dr' else output('postgres_endpoint', output('primary_postgres_endpoint'))
+          documentdb_host = output('dr_documentdb_endpoint') if target_env == 'prod-dr' else output('documentdb_endpoint', output('primary_documentdb_endpoint'))
+          redis_host = output('dr_redis_endpoint') if target_env == 'prod-dr' else output('redis_endpoint')
+          kafka_bootstrap = output('dr_msk_bootstrap_brokers_tls') if target_env == 'prod-dr' else output('msk_bootstrap_brokers_tls')
+          frontend_bucket = output('dr_frontend_bucket_name') if target_env == 'prod-dr' else output('frontend_bucket_name')
+
+          data = {
+              'POSTGRES_HOST': postgres_host,
+              'POSTGRES_PORT': '5432',
+              'POSTGRES_DB': 'cinevision',
+              'POSTGRES_JDBC_PARAMS': '?sslmode=require',
+              'MONGO_HOST': documentdb_host,
+              'MONGO_PORT': '27017',
+              'MONGO_DATABASE': 'cinevision',
+              'MONGO_AUTH_SOURCE': 'user',
+              'MONGO_OPTIONS': '&tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false',
+              'REDIS_HOST': redis_host,
+              'REDIS_PORT': '6379',
+              'SPRING_DATA_REDIS_SSL_ENABLED': 'true',
+              'KAFKA_BOOTSTRAP_SERVERS': kafka_bootstrap,
+              'KAFKA_SECURITY_PROTOCOL': 'SSL',
+              'SPRING_KAFKA_SECURITY_PROTOCOL': 'SSL',
+              'AWS_REGION': os.environ['AWS_REGION'],
+              'AWS_SES_REGION': os.environ['AWS_REGION'],
+              'AWS_S3_BUCKET': frontend_bucket,
+              'CINEVISION_STORAGE_POSTER_REGION': os.environ['AWS_REGION'],
+              'CINEVISION_STORAGE_EMAIL_ARCHIVE_REGION': os.environ['AWS_REGION'],
+              'ENVIRONMENT': overlay_env,
+              'EUREKA_SERVER_URL': 'http://eureka-server:8761/eureka',
+          }
+
+          optional = {
+              'CINEVISION_STORAGE_POSTER_BUCKET': output('movie_posters_bucket_name'),
+              'CINEVISION_STORAGE_EMAIL_ARCHIVE_BUCKET': output('email_archives_bucket_name'),
+              'CINEVISION_FRONTEND_BUCKET': frontend_bucket,
+              'CINEVISION_CLOUDFRONT_DOMAIN_NAME': output('cloudfront_domain_name'),
+              'CINEVISION_CLOUDFRONT_DISTRIBUTION_ID': output('cloudfront_distribution_id'),
+              'CINEVISION_MOVIE_POSTERS_CLOUDFRONT_DISTRIBUTION_ID': output('movie_posters_cloudfront_distribution_id'),
+              'CINEVISION_EMAIL_ARCHIVES_CLOUDFRONT_DISTRIBUTION_ID': output('email_archives_cloudfront_distribution_id'),
+              'DATABASE_CREDENTIALS_SECRET_NAME': output('database_credentials_secret_name'),
+              'APPLICATION_SECRETS_SECRET_NAME': output('application_secrets_secret_name'),
+              'EKS_CLUSTER_NAME': output('dr_eks_cluster_name') if target_env == 'prod-dr' else output('eks_cluster_name'),
+          }
+          data.update({k: v for k, v in optional.items() if v})
+
+          required = ['POSTGRES_HOST', 'MONGO_HOST', 'REDIS_HOST', 'KAFKA_BOOTSTRAP_SERVERS']
+          missing = [key for key in required if not data.get(key)]
+          if missing:
+              raise SystemExit(f'Missing required Terraform outputs for ConfigMap generation: {missing}')
+
+          def quote(value):
+              return json.dumps(str(value))
+
+          overlay_path.parent.mkdir(parents=True, exist_ok=True)
+          lines = [
+              'apiVersion: v1',
+              'kind: ConfigMap',
+              'metadata:',
+              '  name: cinevision-config',
+              'data:',
+              '  # Generated by .github/workflows/terraform-apply.yml from terraform output -json.',
+              '  # Do not edit these infrastructure-derived values manually.',
+          ]
+          for key in sorted(data):
+              lines.append(f'  {key}: {quote(data[key])}')
+          overlay_path.write_text('\n'.join(lines) + '\n')
+          print(f'Updated {overlay_path}')
+          PY
+
+      - name: Commit generated ConfigMap patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/overlays/dev/configmap-patch.yaml k8s/overlays/staging/configmap-patch.yaml k8s/overlays/prod/configmap-patch.yaml k8s/overlays/dr/configmap-patch.yaml
+          if git diff --cached --quiet; then
+            echo "No ConfigMap changes generated from Terraform outputs."
+          else
+            git commit -m "chore(k8s): sync ${{ needs.setup.outputs.env }} configmap from terraform outputs [skip ci]"
+            git push
+          fi
+
+      - name: ConfigMap sync summary
+        run: |
+          {
+            echo "## Kubernetes ConfigMap Sync"
+            echo "- **Environment:** ${{ needs.setup.outputs.env }}"
+            echo "- **Source:** terraform output -json"
+            echo "- **Target overlay:** k8s/overlays/${{ needs.setup.outputs.env == 'prod-dr' && 'dr' || needs.setup.outputs.env }}/configmap-patch.yaml"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# --------------------------------
+# 4. Production DR with Approval Gate
 # --------------------------------
   terraform-apply-dr:
     needs: setup
@@ -189,7 +349,7 @@ jobs:
         run: |
           cd terraform/environments/prod-dr
           terraform plan -out=tfplan
-          echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+          echo "plan_exit_code=$?" >> "$GITHUB_OUTPUT"
           
       - name: Terraform Apply
         run: |
@@ -255,8 +415,10 @@ jobs:
       - name: Terraform Apply DR Summary
         if: always()
         run: |
-          echo "## Terraform Apply DR Results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** prod-dr" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Plan Exit Code:** ${{ steps.plan_dr.outputs.plan_exit_code }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Terraform Apply DR Results"
+            echo "- **Environment:** prod-dr"
+            echo "- **Status:** ${{ job.status }}"
+            echo "- **Branch:** ${{ github.ref_name }}"
+            echo "- **Plan Exit Code:** ${{ steps.plan_dr.outputs.plan_exit_code }}"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,5 @@
+[sqlfluff]
+dialect = postgres
+
+[sqlfluff:rules]
+ignore = LT01,LT05,LT14,AL01,AL03,AM05,ST09,PG01

@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: docdb-user-repair
+  namespace: cinevision-prod
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: 'false'
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mongosh
+          image: mongo:7
+          envFrom:
+            - configMapRef:
+                name: cinevision-config
+            - secretRef:
+                name: cinevision-app-secrets
+            - secretRef:
+                name: docdb-admin-credentials
+          command:
+            - bash
+            - -lc
+            - |
+              mongosh "mongodb://${DOCDB_ADMIN_USER}:${DOCDB_ADMIN_PASSWORD}@${MONGO_HOST}:${MONGO_PORT}/admin?tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false&tlsAllowInvalidCertificates=true" --eval '
+                const authDb = db.getSiblingDB(process.env.MONGO_AUTH_SOURCE || "user");
+                const appUser = process.env.MONGO_USERNAME;
+                const appPassword = process.env.MONGO_PASSWORD;
+                const appDb = process.env.MONGO_DATABASE || "cinevision";
+                const roles = [{ role: "readWrite", db: appDb }];
+                try {
+                  authDb.createUser({ user: appUser, pwd: appPassword, roles });
+                  print("created app user");
+                } catch (e) {
+                  if (String(e).includes("already exists")) {
+                    authDb.updateUser(appUser, { pwd: appPassword, roles });
+                    print("updated app user");
+                  } else {
+                    throw e;
+                  }
+                }
+                const targetDb = db.getSiblingDB(appDb);
+                targetDb.users.createIndex({ email: 1 }, { unique: true });
+                targetDb.users.createIndex({ userId: 1 }, { unique: true });
+                print("verified app database indexes");
+              '

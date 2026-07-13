@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cinevision-config
+data:
+  POSTGRES_HOST: "cinevision-prod-postgres-dr.CLUSTER_ID.us-west-2.rds.amazonaws.com"
+  MONGO_HOST: "cinevision-prod-docdb-dr.CLUSTER_ID.docdb.amazonaws.com"
+  REDIS_HOST: "cinevision-prod-dr-redis.cache.amazonaws.com"
+  KAFKA_BOOTSTRAP_SERVERS: "REPLACE_WITH_TERRAFORM_OUTPUT_dr_msk_bootstrap_brokers_tls"
+  MAIL_HOST: "smtp.dr.internal"
