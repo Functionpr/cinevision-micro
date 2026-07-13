@@ -5,6 +5,6 @@ terraform {
     region         = "us-east-1"
     dynamodb_table = "cinevision-terraform-locks-dev"
     encrypt        = true
-    # profile1        = "cinevision-dev"
+    # profile        = "cinevision-dev"
   }
 }
