@@ -6,20 +6,12 @@ output "frontend_bucket_name" {
   value = module.s3_cloudfront.frontend_bucket_name
 }
 
-output "cloudfront_domain_name" {
-  value = module.s3_cloudfront.cloudfront_domain_name
+output "frontend_website_endpoint" {
+  value = module.s3_cloudfront.frontend_website_endpoint
 }
 
-output "cloudfront_distribution_id" {
-  value = module.s3_cloudfront.cloudfront_distribution_id
-}
-
-output "movie_posters_cloudfront_distribution_id" {
-  value = module.movie_posters_cloudfront.cloudfront_distribution_id
-}
-
-output "email_archives_cloudfront_distribution_id" {
-  value = module.email_archives_cloudfront.cloudfront_distribution_id
+output "frontend_website_domain" {
+  value = module.s3_cloudfront.frontend_website_domain
 }
 
 output "waf_web_acl_arn" {

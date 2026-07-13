@@ -13,11 +13,11 @@ locals {
     ManagedBy = "Terraform"
   })
 
-  use_custom_certificate = try(trim(var.acm_certificate_arn, " ") != "", false)
-
   frontend_bucket_id                   = var.create_bucket ? aws_s3_bucket.frontend[0].id : var.existing_bucket_id
   frontend_bucket_arn                  = var.create_bucket ? aws_s3_bucket.frontend[0].arn : var.existing_bucket_arn
   frontend_bucket_regional_domain_name = var.create_bucket ? aws_s3_bucket.frontend[0].bucket_regional_domain_name : var.existing_bucket_regional_domain_name
+  frontend_bucket_website_endpoint     = var.create_bucket ? aws_s3_bucket_website_configuration.frontend[0].website_endpoint : null
+  frontend_bucket_website_domain       = var.create_bucket ? aws_s3_bucket_website_configuration.frontend[0].website_domain : null
 }
 
 resource "aws_s3_bucket" "frontend" {
@@ -38,10 +38,32 @@ resource "aws_s3_bucket_versioning" "frontend" {
 resource "aws_s3_bucket_public_access_block" "frontend" {
   count                   = var.create_bucket ? 1 : 0
   bucket                  = aws_s3_bucket.frontend[0].id
-  block_public_acls       = true
-  block_public_policy     = true
+  block_public_acls       = false
+  block_public_policy     = false
   ignore_public_acls      = true
-  restrict_public_buckets = true
+  restrict_public_buckets = false
+}
+
+resource "aws_s3_bucket_ownership_controls" "frontend" {
+  count  = var.create_bucket ? 1 : 0
+  bucket = aws_s3_bucket.frontend[0].id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_website_configuration" "frontend" {
+  count  = var.create_bucket ? 1 : 0
+  bucket = aws_s3_bucket.frontend[0].id
+
+  index_document {
+    suffix = "index.html"
+  }
+
+  error_document {
+    key = "index.html"
+  }
 }
 
 resource "aws_s3_bucket" "logs" {
@@ -178,86 +200,24 @@ resource "aws_s3_bucket_replication_configuration" "frontend" {
   ]
 }
 
-resource "aws_cloudfront_origin_access_identity" "this" {
-  comment = "${var.project_name}-${var.environment}-frontend-oai"
-}
-
 data "aws_iam_policy_document" "frontend_bucket" {
+  count = var.create_bucket ? 1 : 0
+
   statement {
     actions   = ["s3:GetObject"]
     resources = ["${local.frontend_bucket_arn}/*"]
 
     principals {
-      type        = "AWS"
-      identifiers = [aws_cloudfront_origin_access_identity.this.iam_arn]
+      type        = "*"
+      identifiers = ["*"]
     }
   }
 }
 
 resource "aws_s3_bucket_policy" "frontend" {
+  count  = var.create_bucket ? 1 : 0
   bucket = local.frontend_bucket_id
-  policy = data.aws_iam_policy_document.frontend_bucket.json
-}
-
-resource "aws_cloudfront_distribution" "frontend" {
-  enabled             = true
-  is_ipv6_enabled     = true
-  default_root_object = "index.html"
-  price_class         = var.price_class
-  aliases             = var.aliases
-  web_acl_id          = var.web_acl_arn
-
-  origin {
-    domain_name = local.frontend_bucket_regional_domain_name
-    origin_id   = "frontend-s3-origin"
-
-    s3_origin_config {
-      origin_access_identity = aws_cloudfront_origin_access_identity.this.cloudfront_access_identity_path
-    }
-  }
-
-  default_cache_behavior {
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "frontend-s3-origin"
-    viewer_protocol_policy = "redirect-to-https"
-    compress               = true
-
-    forwarded_values {
-      query_string = false
-
-      cookies {
-        forward = "none"
-      }
-    }
-  }
-
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
-  }
-
-  viewer_certificate {
-    cloudfront_default_certificate = !local.use_custom_certificate
-    acm_certificate_arn            = local.use_custom_certificate ? var.acm_certificate_arn : null
-    ssl_support_method             = local.use_custom_certificate ? "sni-only" : null
-    minimum_protocol_version       = local.use_custom_certificate ? "TLSv1.2_2021" : null
-  }
-
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
-
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
+  policy = data.aws_iam_policy_document.frontend_bucket[0].json
 
   lifecycle {
     precondition {
@@ -270,5 +230,8 @@ resource "aws_cloudfront_distribution" "frontend" {
     }
   }
 
-  tags = local.common_tags
+  depends_on = [
+    aws_s3_bucket_public_access_block.frontend,
+    aws_s3_bucket_ownership_controls.frontend
+  ]
 }

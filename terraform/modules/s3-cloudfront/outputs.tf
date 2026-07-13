@@ -10,14 +10,14 @@ output "dr_frontend_bucket_name" {
   value = try(aws_s3_bucket.frontend_dr[0].bucket, null)
 }
 
-output "cloudfront_domain_name" {
-  value = aws_cloudfront_distribution.frontend.domain_name
+output "frontend_bucket_regional_domain_name" {
+  value = local.frontend_bucket_regional_domain_name
 }
 
-output "cloudfront_distribution_id" {
-  value = aws_cloudfront_distribution.frontend.id
+output "frontend_website_endpoint" {
+  value = local.frontend_bucket_website_endpoint
 }
 
-output "cloudfront_distribution_arn" {
-  value = aws_cloudfront_distribution.frontend.arn
+output "frontend_website_domain" {
+  value = local.frontend_bucket_website_domain
 }

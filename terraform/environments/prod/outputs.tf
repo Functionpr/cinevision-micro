@@ -6,22 +6,6 @@ output "dr_vpc_id" {
   value = module.dr_vpc.vpc_id
 }
 
-output "cloudfront_domain_name" {
-  value = module.s3_cloudfront.cloudfront_domain_name
-}
-
-output "cloudfront_distribution_id" {
-  value = module.s3_cloudfront.cloudfront_distribution_id
-}
-
-output "movie_posters_cloudfront_distribution_id" {
-  value = module.movie_posters_cloudfront.cloudfront_distribution_id
-}
-
-output "email_archives_cloudfront_distribution_id" {
-  value = module.email_archives_cloudfront.cloudfront_distribution_id
-}
-
 output "waf_web_acl_arn" {
   value = module.waf.web_acl_arn
 }
@@ -32,6 +16,14 @@ output "shield_protection_ids" {
 
 output "frontend_bucket_name" {
   value = module.s3_cloudfront.frontend_bucket_name
+}
+
+output "frontend_website_endpoint" {
+  value = module.s3_cloudfront.frontend_website_endpoint
+}
+
+output "frontend_website_domain" {
+  value = module.s3_cloudfront.frontend_website_domain
 }
 
 output "dr_frontend_bucket_name" {
