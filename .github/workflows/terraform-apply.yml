@@ -37,14 +37,14 @@ jobs:
       - id: mapping
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "env=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "env=${{ github.event.inputs.environment }}" >> "$GITHUB_OUTPUT"
           else
             if [[ "${{ github.ref_name }}" == "develop" ]]; then
-              echo 'env=dev' >> $GITHUB_OUTPUT
+              echo 'env=dev' >> "$GITHUB_OUTPUT"
             elif [[ "${{ github.ref_name }}" == "staging" ]]; then
-              echo 'env=staging' >> $GITHUB_OUTPUT
+              echo 'env=staging' >> "$GITHUB_OUTPUT"
             elif [[ "${{ github.ref_name }}" == "main" ]]; then
-              echo 'env=prod' >> $GITHUB_OUTPUT
+              echo 'env=prod' >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -82,7 +82,7 @@ jobs:
         run: |
           cd terraform/environments/${{ needs.setup.outputs.env }}
           terraform plan -out=tfplan
-          echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+          echo "plan_exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Terraform Apply
         run: |
@@ -148,12 +148,14 @@ jobs:
       - name: Terraform Apply Summary
         if: always()
         run: |
-          echo "## Terraform Apply Results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** ${{ needs.setup.outputs.env }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Plan Exit Code:** ${{ steps.plan.outputs.plan_exit_code }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Terraform Apply Results"
+            echo "- **Environment:** ${{ needs.setup.outputs.env }}"
+            echo "- **Status:** ${{ job.status }}"
+            echo "- **Branch:** ${{ github.ref_name }}"
+            echo "- **Triggered by:** ${{ github.event_name }}"
+            echo "- **Plan Exit Code:** ${{ steps.plan.outputs.plan_exit_code }}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
 # --------------------------------
 # 3. Sync Terraform Outputs to Kubernetes ConfigMap
@@ -188,7 +190,7 @@ jobs:
       - name: Export Terraform outputs
         run: |
           cd terraform/environments/${{ needs.setup.outputs.env }}
-          terraform output -json > $GITHUB_WORKSPACE/terraform-outputs.json
+          terraform output -json > "$GITHUB_WORKSPACE/terraform-outputs.json"
 
       - name: Generate Kubernetes ConfigMap patch
         env:
@@ -302,10 +304,12 @@ jobs:
 
       - name: ConfigMap sync summary
         run: |
-          echo "## Kubernetes ConfigMap Sync" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** ${{ needs.setup.outputs.env }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Source:** terraform output -json" >> $GITHUB_STEP_SUMMARY
-          echo "- **Target overlay:** k8s/overlays/${{ needs.setup.outputs.env == 'prod-dr' && 'dr' || needs.setup.outputs.env }}/configmap-patch.yaml" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Kubernetes ConfigMap Sync"
+            echo "- **Environment:** ${{ needs.setup.outputs.env }}"
+            echo "- **Source:** terraform output -json"
+            echo "- **Target overlay:** k8s/overlays/${{ needs.setup.outputs.env == 'prod-dr' && 'dr' || needs.setup.outputs.env }}/configmap-patch.yaml"
+          } >> "$GITHUB_STEP_SUMMARY"
 
 # --------------------------------
 # 4. Production DR with Approval Gate
@@ -345,7 +349,7 @@ jobs:
         run: |
           cd terraform/environments/prod-dr
           terraform plan -out=tfplan
-          echo "plan_exit_code=$?" >> $GITHUB_OUTPUT
+          echo "plan_exit_code=$?" >> "$GITHUB_OUTPUT"
           
       - name: Terraform Apply
         run: |
@@ -411,8 +415,10 @@ jobs:
       - name: Terraform Apply DR Summary
         if: always()
         run: |
-          echo "## Terraform Apply DR Results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** prod-dr" >> $GITHUB_STEP_SUMMARY
-          echo "- **Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Plan Exit Code:** ${{ steps.plan_dr.outputs.plan_exit_code }}" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Terraform Apply DR Results"
+            echo "- **Environment:** prod-dr"
+            echo "- **Status:** ${{ job.status }}"
+            echo "- **Branch:** ${{ github.ref_name }}"
+            echo "- **Plan Exit Code:** ${{ steps.plan_dr.outputs.plan_exit_code }}"
+          } >> "$GITHUB_STEP_SUMMARY"

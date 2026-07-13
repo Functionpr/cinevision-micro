@@ -368,6 +368,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f tests/integration/package.json ]; then
+            if [ -z "${BASE_URL:-}" ]; then
+              echo "No BASE_URL configured; skipping integration tests"
+              exit 0
+            fi
             cd tests/integration
             if [ -f package-lock.json ]; then
               npm ci --no-audit --no-fund

@@ -8,6 +8,13 @@ const client = axios.create({
   timeout: 20000
 });
 
+before(function () {
+  if (!process.env.BASE_URL && process.env.CI === 'true') {
+    console.log('Skipping integration API tests in CI because BASE_URL is not configured.');
+    this.skip();
+  }
+});
+
 describe('CineVision critical API flow', function () {
   const password = 'Password123!';
   const email = `mocha-${Date.now()}@cinevision.local`;
