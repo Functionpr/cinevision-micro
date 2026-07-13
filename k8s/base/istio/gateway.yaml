@@ -1,0 +1,30 @@
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: cinevision-gateway
+  namespace: cinevision
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    tls:
+      httpsRedirect: true
+    hosts:
+    - "*.dev.cinevisionca.link"
+    - "*.staging.cinevisionca.link"
+    - "cinevisionca.link"
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - "*.dev.cinevisionca.link"
+    - "*.staging.cinevisionca.link"
+    - "cinevisionca.link"
+    tls:
+      mode: SIMPLE
+      credentialName: cinevision-tls

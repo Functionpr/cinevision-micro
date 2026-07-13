@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cinevision-config
+data:
+  POSTGRES_HOST: "cinevision-prod-postgres.CLUSTER_ID.us-east-1.rds.amazonaws.com"
+  MONGO_DATABASE: "cinevision"
+  MONGO_AUTH_SOURCE: "user"
+  MONGO_HOST: "cinevision-prod-docdb.CLUSTER_ID.docdb.amazonaws.com"
+  REDIS_HOST: "cinevision-prod-redis.cache.amazonaws.com"
+  SPRING_DATA_REDIS_SSL_ENABLED: "true"
+  KAFKA_BOOTSTRAP_SERVERS: "b-1.prod-msk.amazonaws.com:9094,b-2.prod-msk.amazonaws.com:9094,b-3.prod-msk.amazonaws.com:9094"
+  KAFKA_SECURITY_PROTOCOL: "SSL"
+  SPRING_KAFKA_SECURITY_PROTOCOL: "SSL"
+  MAIL_HOST: "smtp.prod.internal"

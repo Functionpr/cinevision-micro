@@ -1,0 +1,46 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cinevision-dev
+resources:
+  - docdb-user-repair-job.yaml
+  - docdb-admin-externalsecret.yaml
+  - ../../base
+  - mailhog.yaml
+images:
+  - name: api-gateway
+    newName: 211026994790.dkr.ecr.us-east-1.amazonaws.com/cinevision/api-gateway
+    newTag: dev
+  - name: user-service
+    newName: 211026994790.dkr.ecr.us-east-1.amazonaws.com/cinevision/user-service
+    newTag: dev
+  - name: movie-service
+    newName: 211026994790.dkr.ecr.us-east-1.amazonaws.com/cinevision/movie-service
+    newTag: dev
+  - name: email-service
+    newName: 211026994790.dkr.ecr.us-east-1.amazonaws.com/cinevision/email-service
+    newTag: dev
+  - name: eureka-server
+    newName: 211026994790.dkr.ecr.us-east-1.amazonaws.com/cinevision/eureka-server
+    newTag: dev
+replicas:
+  - name: api-gateway
+    count: 1
+  - name: user-service
+    count: 1
+  - name: movie-service
+    count: 1
+  - name: email-service
+    count: 1
+patches:
+  - path: namespace-label-patch.yaml
+  - path: configmap-patch.yaml
+  - path: externalsecret-patch.yaml
+  - target:
+      group: external-secrets.io
+      version: v1
+      kind: ClusterSecretStore
+      name: cinevision-secret-store
+    patch: |-
+      - op: replace
+        path: /spec/provider/aws/auth/jwt/serviceAccountRef/namespace
+        value: cinevision-dev

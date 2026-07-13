@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cinevision-config
+data:
+  # Spring Boot Configuration
+  SPRING_PROFILES_ACTIVE: "k8s"
+  
+  # Eureka Service Discovery
+  EUREKA_HOST: "eureka-server"
+  EUREKA_PORT: "8761"
+  
+  # OpenTelemetry / X-Ray Tracing Configuration
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://adot-collector:4318/v1/traces"
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+  OTEL_PROPAGATORS: "tracecontext,baggage,b3"
+  
+  # AWS RDS - PostgreSQL for Movie Service
+  POSTGRES_HOST: "postgres.endpoint.aws.local"
+  POSTGRES_DB: "cinevision"
+  POSTGRES_PORT: "5432"
+  POSTGRES_JDBC_PARAMS: "?sslmode=require"
+  # HikariCP Connection Pool Settings for RDS
+  HIKARI_MAX_POOL_SIZE: "20"
+  HIKARI_MIN_IDLE: "5"
+  HIKARI_CONNECTION_TIMEOUT: "30000"
+  HIKARI_IDLE_TIMEOUT: "600000"
+  HIKARI_MAX_LIFETIME: "1800000"
+  
+  # AWS DocumentDB - MongoDB for User Service
+  MONGO_HOST: "documentdb.endpoint.aws.local"
+  MONGO_PORT: "27017"
+  MONGO_DATABASE: "cinevision"
+  MONGO_AUTH_SOURCE: "user"
+  MONGO_OPTIONS: "&tls=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false"
+  # MongoDB Connection Pool Settings for DocumentDB
+  MONGO_CONNECTION_POOL_SIZE: "20"
+  MONGO_MIN_POOL_SIZE: "5"
+  MONGO_CONNECT_TIMEOUT_MS: "10000"
+  MONGO_SOCKET_TIMEOUT_MS: "30000"
+  MONGO_SERVER_SELECTION_TIMEOUT_MS: "5000"
+  
+  # AWS ElastiCache - Redis
+  REDIS_HOST: "redis.endpoint.aws.local"
+  REDIS_PORT: "6379"
+  SPRING_DATA_REDIS_SSL_ENABLED: "true"
+  
+  # AWS MSK - Kafka
+  KAFKA_BOOTSTRAP_SERVERS: "msk.bootstrap.aws.local:9094"
+  KAFKA_EMAIL_TOPIC: "email-topics"
+  KAFKA_EMAIL_GROUP: "email-service"
+  KAFKA_SECURITY_PROTOCOL: "SSL"
+  SPRING_KAFKA_SECURITY_PROTOCOL: "SSL"
+  
+  # AWS SES - Email Service Provider
+  CINEVISION_EMAIL_PROVIDER: "aws-ses"
+  CINEVISION_EMAIL_FROM_ADDRESS: "noreply@cinevision.local"
+  CINEVISION_EMAIL_AWS_REGION: "us-east-1"
+  CINEVISION_EMAIL_ENABLE_BOUNCE_HANDLING: "false"
+  
+  # AWS S3 - Movie Posters Storage
+  CINEVISION_STORAGE_POSTER_ENABLED: "true"
+  CINEVISION_STORAGE_POSTER_REGION: "us-east-1"
+  CINEVISION_STORAGE_POSTER_BUCKET: "cinevision-movie-assets-ENV"
+  CINEVISION_STORAGE_POSTER_PUBLIC_BASE_URL: "https://movie-assets.cinevisionca.link"
+  CINEVISION_STORAGE_POSTER_KEY_PREFIX: "movie-posters"
+  CINEVISION_STORAGE_POSTER_PATH_STYLE_ACCESS_ENABLED: "false"
+  
+  # AWS S3 - Email Archive Storage
+  CINEVISION_STORAGE_EMAIL_ARCHIVE_ENABLED: "true"
+  CINEVISION_STORAGE_EMAIL_ARCHIVE_REGION: "us-east-1"
+  CINEVISION_STORAGE_EMAIL_ARCHIVE_BUCKET: "cinevision-email-archive-ENV"
+  CINEVISION_STORAGE_EMAIL_ARCHIVE_KEY_PREFIX: "ticket-emails"
+  CINEVISION_STORAGE_EMAIL_ARCHIVE_PATH_STYLE_ACCESS_ENABLED: "false"
