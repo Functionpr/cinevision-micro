@@ -98,9 +98,6 @@ module "s3_cloudfront" {
   frontend_bucket_name    = var.frontend_bucket_name
   logs_bucket_name        = var.logs_bucket_name
   dr_frontend_bucket_name = var.dr_frontend_bucket_name
-  aliases                 = var.frontend_aliases
-  acm_certificate_arn     = var.acm_certificate_arn
-  web_acl_arn             = module.waf.web_acl_arn
   enable_replication      = true
   tags                    = local.tags
 }
@@ -125,61 +122,15 @@ module "email_archives_s3" {
   tags         = local.tags
 }
 
-module "movie_posters_cloudfront" {
-  source = "../../modules/s3-cloudfront"
-
-  providers = {
-    aws    = aws
-    aws.dr = aws.dr
-  }
-
-  project_name                         = var.project_name
-  environment                          = local.environment
-  frontend_bucket_name                 = module.movie_posters_s3.bucket_name
-  logs_bucket_name                     = var.logs_bucket_name
-  create_bucket                        = false
-  create_logs_bucket                   = false
-  existing_bucket_id                   = module.movie_posters_s3.bucket_name
-  existing_bucket_arn                  = module.movie_posters_s3.bucket_arn
-  existing_bucket_regional_domain_name = module.movie_posters_s3.bucket_regional_domain_name
-  web_acl_arn                          = module.waf.web_acl_arn
-  tags                                 = local.tags
-}
-
-module "email_archives_cloudfront" {
-  source = "../../modules/s3-cloudfront"
-
-  providers = {
-    aws    = aws
-    aws.dr = aws.dr
-  }
-
-  project_name                         = var.project_name
-  environment                          = local.environment
-  frontend_bucket_name                 = module.email_archives_s3.bucket_name
-  logs_bucket_name                     = var.logs_bucket_name
-  create_bucket                        = false
-  create_logs_bucket                   = false
-  existing_bucket_id                   = module.email_archives_s3.bucket_name
-  existing_bucket_arn                  = module.email_archives_s3.bucket_arn
-  existing_bucket_regional_domain_name = module.email_archives_s3.bucket_regional_domain_name
-  web_acl_arn                          = module.waf.web_acl_arn
-  tags                                 = local.tags
-}
-
 module "shield" {
   source = "../../modules/waf-shield"
 
-  project_name           = var.project_name
-  environment            = local.environment
-  enable_waf             = false
-  enable_shield_advanced = var.enable_shield_advanced
-  cloudfront_resource_arns = compact([
-    module.s3_cloudfront.cloudfront_distribution_arn,
-    module.movie_posters_cloudfront.cloudfront_distribution_arn,
-    module.email_archives_cloudfront.cloudfront_distribution_arn
-  ])
-  tags = local.tags
+  project_name             = var.project_name
+  environment              = local.environment
+  enable_waf               = false
+  enable_shield_advanced   = var.enable_shield_advanced
+  cloudfront_resource_arns = []
+  tags                     = local.tags
 }
 
 module "eks" {
